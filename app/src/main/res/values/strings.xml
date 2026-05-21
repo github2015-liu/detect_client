@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">HealthDetectClient</string>
+    <string name="bt_bind">开始检测</string>
+    <string name="bt_auto">开始自动检测</string>
+    <string name="bt_update_seat">更新座位</string>
+    <string name="bt_stop_detect">停止检测</string>
+    <string name="bt_unbind">解绑服务</string>
+    <string name="bt_toast">当前检测座位</string>
+    <string name="bt_open_preview">打开预览</string>
+    <string name="bt_close_preview">关闭预览</string>
+    <string name="hint_preview_camera_id">设置摄像头ID，默认13</string>
+    <string name="hint_update_seat">选择更新座位</string>
+</resources>
