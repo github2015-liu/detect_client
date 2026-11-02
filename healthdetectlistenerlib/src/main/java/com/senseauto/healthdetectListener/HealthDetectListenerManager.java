@@ -56,6 +56,14 @@ public class HealthDetectListenerManager {
                 @Override
                 public void onFinishResult(String seat,String json) {
                     HealthResult result = new Gson().fromJson(json, HealthResult.class);
+                    Log.i(TAG, "onFinishResult:"
+                            + " 座位：" + seat
+                            + "，心率：" + result.heartRate
+                            + "，呼吸率：" + result.breathRate
+                            + "，血氧：" + result.bloodOxygen
+                            + "，压力值：" + result.stressScore
+                            + "，收缩压：" + result.systolicPressure
+                            + "，舒张压：" + result.diastolicPressure);
                     for (HealthDetectListenerManager.HealthDetectListener l : listeners) {
                         l.onFinishResult(seat,result);
                     }

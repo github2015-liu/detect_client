@@ -8,6 +8,18 @@
     <string name="bt_toast">当前检测座位</string>
     <string name="bt_open_preview">打开预览</string>
     <string name="bt_close_preview">关闭预览</string>
+    <string name="bt_exit">退出程序</string>
     <string name="hint_preview_camera_id">设置摄像头ID，默认13</string>
-    <string name="hint_update_seat">选择更新座位</string>
+    <string name="health_result_waiting">健康检测结果：等待检测完成</string>
+    <string name="health_result_realtime">实时心率：%1$s\n实时呼吸率：%2$s</string>
+    <string name="health_result_final">最终心率：%1$s\n最终呼吸率：%2$s</string>
+    <string name="health_result_error">健康检测失败（%1$d）：%2$s</string>
+    <string name="health_result_bind_failed">健康检测结果服务绑定失败</string>
+    <string name="health_result_parse_failed">健康检测结果解析失败</string>
+    <string-array name="update_seat_options">
+        <item>前排左侧</item>
+        <item>前排右侧</item>
+        <item>后排左侧</item>
+        <item>后排右侧</item>
+    </string-array>
 </resources>

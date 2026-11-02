@@ -4,90 +4,128 @@
     android:layout_height="match_parent"
     android:orientation="vertical">
 
-    <Button
-        android:id="@+id/bt_bind"
+    <TextView
+        android:id="@+id/tv_health_result"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/bt_bind" />
-
-    <Button
-        android:id="@+id/bt_auto"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/bt_auto" />
+        android:background="#F5F5F5"
+        android:minHeight="96dp"
+        android:padding="12dp"
+        android:text="@string/health_result_waiting"
+        android:textColor="#212121"
+        android:textIsSelectable="true" />
 
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <EditText
-            android:id="@+id/et_update_seat"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="@string/hint_update_seat"
-            android:text="front_left" />
-
-        <Button
-            android:id="@+id/bt_update_seat"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/bt_update_seat" />
-    </LinearLayout>
-
-    <Button
-        android:id="@+id/bt_stop_detect"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/bt_stop_detect" />
-
-    <Button
-        android:id="@+id/bt_unbind"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/bt_unbind" />
-
-    <Button
-        android:id="@+id/bt_toast"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/bt_toast" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-
-        <EditText
-            android:id="@+id/et_preview_camera_id"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:hint="@string/hint_preview_camera_id"
-            android:inputType="number"
-            android:text="13" />
-
-        <Button
-            android:id="@+id/bt_open_preview"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/bt_open_preview" />
-    </LinearLayout>
-
-    <Button
-        android:id="@+id/bt_close_preview"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="@string/bt_close_preview" />
-
-    <TextureView
-        android:id="@+id/sv_preview"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:keepScreenOn="true" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextureView
+            android:id="@+id/sv_preview"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="3"
+            android:keepScreenOn="true" />
+
+        <ScrollView
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <Button
+                android:id="@+id/bt_bind"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_bind" />
+
+            <Button
+                android:id="@+id/bt_auto"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_auto" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Spinner
+                    android:id="@+id/spinner_update_seat"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:entries="@array/update_seat_options"
+                    android:spinnerMode="dropdown" />
+
+                <Button
+                    android:id="@+id/bt_update_seat"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/bt_update_seat" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/bt_stop_detect"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_stop_detect" />
+
+            <Button
+                android:id="@+id/bt_unbind"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_unbind" />
+
+            <Button
+                android:id="@+id/bt_toast"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_toast" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <EditText
+                    android:id="@+id/et_preview_camera_id"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:hint="@string/hint_preview_camera_id"
+                    android:inputType="number"
+                    android:text="13" />
+
+                <Button
+                    android:id="@+id/bt_open_preview"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/bt_open_preview" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/bt_close_preview"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_close_preview" />
+
+            <Button
+                android:id="@+id/bt_exit"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_exit" />
+
+        </LinearLayout>
+        </ScrollView>
+    </LinearLayout>
 
 </LinearLayout>

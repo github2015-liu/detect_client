@@ -2,12 +2,18 @@ package com.senseauto.healthdetectclient;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
 import android.graphics.SurfaceTexture;
 import android.os.Bundle;
+import android.os.IBinder;
+import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Surface;
@@ -15,17 +21,25 @@ import android.view.TextureView;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.Spinner;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 
+import com.senseauto.healthdetect.Constants;
 import com.senseauto.healthdetect.HealthDetectManager;
+import com.senseauto.healthdetect.IHealDetectApiInterface;
+import com.senseauto.healthdetect.IHealthDetectCallback;
 import com.senseauto.healthdetect.Seat;
 import com.senseauto.subgroup.autocameralib.CameraFactory;
 import com.senseauto.subgroup.autocameralib.callback.CameraImageCallback;
 import com.senseauto.subgroup.autocameralib.model.CameraOptions;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class MainActivity extends Activity implements TextureView.SurfaceTextureListener {
     private static final String TAG = "MainActivity";
@@ -39,10 +53,76 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
     private Surface previewSurface;
     private TextureView previewTextureView;
     private EditText previewCameraIdInput;
-    private EditText updateSeatInput;
+    private Spinner updateSeatSpinner;
+    private TextView healthResultTextView;
     private CameraFactory previewCameraFactory;
+    private IHealDetectApiInterface resultService;
+    private boolean resultServiceBound = false;
     private boolean isPreviewOpen = false;
     private boolean pendingOpenPreview = false;
+
+    private final IHealthDetectCallback resultCallback = new IHealthDetectCallback.Stub() {
+        @Override
+        public void onHealthStateUpdate(String seat, String healthJson) {
+            String resultText = formatHealthVitals(R.string.health_result_realtime, healthJson, true);
+            Log.i(TAG, "onHealthStateUpdate: " + resultText);
+            runOnUiThread(() -> healthResultTextView.setText(resultText));
+        }
+
+        @Override
+        public void onFinishResult(String seat, String healthJson) {
+            String resultText = formatHealthVitals(R.string.health_result_final, healthJson, false);
+            Log.i(TAG, "onFinishResult:\n" + resultText);
+            runOnUiThread(() -> {
+                healthResultTextView.setVisibility(View.VISIBLE);
+                healthResultTextView.bringToFront();
+                healthResultTextView.setText(resultText);
+                Log.i(TAG, "health result view updated: width="
+                        + healthResultTextView.getWidth()
+                        + ", height=" + healthResultTextView.getHeight());
+            });
+        }
+
+        @Override
+        public void onError(int code, String message) {
+            runOnUiThread(() -> healthResultTextView.setText(
+                    getString(R.string.health_result_error, code, message)
+            ));
+        }
+    };
+
+    private String formatHealthVitals(int formatResource, String healthJson, boolean realtime) {
+        try {
+            JSONObject result = new JSONObject(healthJson);
+            return getString(
+                    formatResource,
+                    result.optString(realtime ? "heart_rate" : "heartRate",
+                            result.optString("heartRate", "--")),
+                    result.optString(realtime ? "breath_rate" : "breathRate",
+                            result.optString("breathRate", "--"))
+            );
+        } catch (JSONException e) {
+            Log.e(TAG, "parse health result failed", e);
+            return getString(R.string.health_result_parse_failed);
+        }
+    }
+
+    private final ServiceConnection resultServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder service) {
+            resultService = IHealDetectApiInterface.Stub.asInterface(service);
+            try {
+                resultService.registerCallback(resultCallback);
+            } catch (RemoteException e) {
+                Log.e(TAG, "register result callback failed", e);
+            }
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            resultService = null;
+        }
+    };
 
     private void logPreviewState(String event) {
         Log.i(
@@ -62,10 +142,23 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
 
         previewTextureView = findViewById(R.id.sv_preview);
         previewCameraIdInput = findViewById(R.id.et_preview_camera_id);
-        updateSeatInput = findViewById(R.id.et_update_seat);
+        updateSeatSpinner = findViewById(R.id.spinner_update_seat);
+        healthResultTextView = findViewById(R.id.tv_health_result);
+        healthResultTextView.setVisibility(View.VISIBLE);
+        healthResultTextView.bringToFront();
+        Log.i(TAG, "health result view initialized: visible="
+                + (healthResultTextView.getVisibility() == View.VISIBLE));
+        healthResultTextView.post(() -> Log.i(
+                TAG,
+                "health result view laid out: width=" + healthResultTextView.getWidth()
+                        + ", height=" + healthResultTextView.getHeight()
+                        + ", visibility=" + healthResultTextView.getVisibility()
+                        + ", text=" + healthResultTextView.getText()
+        ));
         previewTextureView.setSurfaceTextureListener(this);
         previewTextureView.setScaleX(MIRROR_PREVIEW ? -1f : 1f);
         ensureCameraPermission();
+        bindResultService();
 
         Button bindButton = findViewById(R.id.bt_bind);
         bindButton.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
@@ -78,10 +171,11 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         });
 
         findViewById(R.id.bt_bind).setOnClickListener(v -> {
+            bindResultService();
             HealthDetectManager.getInstance(MainActivity.this).init(new HealthDetectManager.InitCallback() {
                 @Override
                 public void onReady() {
-                    int result = HealthDetectManager.getInstance(MainActivity.this).startDetect(Seat.FRONT_RIGHT);
+                    int result = HealthDetectManager.getInstance(MainActivity.this).startDetect(getUpdateSeat());
                     if (result == 0) {
                         Log.i(TAG, "start success");
                     }
@@ -96,10 +190,11 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         });
 
         findViewById(R.id.bt_auto).setOnClickListener(v -> {
+            bindResultService();
             HealthDetectManager.getInstance(MainActivity.this).init(new HealthDetectManager.InitCallback() {
                 @Override
                 public void onReady() {
-                    int result = HealthDetectManager.getInstance(MainActivity.this).startAutoDetect(new String[]{Seat.FRONT_RIGHT});
+                    int result = HealthDetectManager.getInstance(MainActivity.this).startAutoDetect(new String[]{getUpdateSeat()});
                     if (result == 0) {
                         Log.i(TAG, "auto start success");
                     }
@@ -126,6 +221,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         findViewById(R.id.bt_unbind).setOnClickListener(v -> {
             HealthDetectManager.getInstance(MainActivity.this).stopDetect();
             HealthDetectManager.getInstance(MainActivity.this).release();
+            releaseResultService();
         });
 
         findViewById(R.id.bt_toast).setOnClickListener(v -> {
@@ -142,6 +238,40 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
             logPreviewState("click close preview");
             closePreview();
         });
+        findViewById(R.id.bt_exit).setOnClickListener(v -> {
+            HealthDetectManager.getInstance(MainActivity.this).stopDetect();
+            HealthDetectManager.getInstance(MainActivity.this).release();
+            releaseResultService();
+            closePreview();
+            finishAndRemoveTask();
+        });
+    }
+
+    private void bindResultService() {
+        if (resultServiceBound) {
+            return;
+        }
+        Intent intent = new Intent();
+        intent.setComponent(new ComponentName(Constants.INTENT_PACKAGE_NAME, Constants.INTENT_CLASS_PATH));
+        resultServiceBound = bindService(intent, resultServiceConnection, Context.BIND_AUTO_CREATE);
+        if (!resultServiceBound) {
+            healthResultTextView.setText(R.string.health_result_bind_failed);
+        }
+    }
+
+    private void releaseResultService() {
+        if (resultService != null) {
+            try {
+                resultService.unregisterCallback(resultCallback);
+            } catch (RemoteException e) {
+                Log.e(TAG, "unregister result callback failed", e);
+            }
+            resultService = null;
+        }
+        if (resultServiceBound) {
+            unbindService(resultServiceConnection);
+            resultServiceBound = false;
+        }
     }
 
     private void ensureCameraPermission() {
@@ -286,25 +416,17 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
     }
 
     private String getUpdateSeat() {
-        if (updateSeatInput == null) {
+        if (updateSeatSpinner == null) {
             return Seat.FRONT_LEFT;
         }
-
-        String inputSeat = updateSeatInput.getText().toString().trim().toLowerCase();
-        if (TextUtils.isEmpty(inputSeat)) {
-            updateSeatInput.setText(Seat.FRONT_LEFT);
-            return Seat.FRONT_LEFT;
-        }
-
-        switch (inputSeat) {
-            case Seat.FRONT_LEFT:
-            case Seat.FRONT_RIGHT:
-            case Seat.BACK_LEFT:
-            case Seat.BACK_RIGHT:
-                return inputSeat;
+        switch (updateSeatSpinner.getSelectedItemPosition()) {
+            case 1:
+                return Seat.FRONT_RIGHT;
+            case 2:
+                return Seat.BACK_LEFT;
+            case 3:
+                return Seat.BACK_RIGHT;
             default:
-                updateSeatInput.setText(Seat.FRONT_LEFT);
-                Toast.makeText(this, "座位无效，已使用默认值前排左侧", Toast.LENGTH_SHORT).show();
                 return Seat.FRONT_LEFT;
         }
     }
@@ -418,6 +540,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
     @Override
     protected void onDestroy() {
         logPreviewState("onDestroy enter");
+        releaseResultService();
         closePreview();
         if (previewSurface != null) {
             previewSurface.release();
