@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "com.senseauto.healthdetectclient"
-    compileSdk = 34
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.senseauto.healthdetectclient"
@@ -38,7 +38,6 @@ dependencies {
 //    implementation(project(":healthdetectlib"))
 //    implementation(project(":healthdetectlistenerlib"))
 //    implementation(files("libs/healthdetect_aidl-1.3.0.jar"))
-    implementation(files("libs/AutoCameraLib_1.0.6_release.aar"))
     implementation(files("libs/healthdetectlib-release2.aar"))
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

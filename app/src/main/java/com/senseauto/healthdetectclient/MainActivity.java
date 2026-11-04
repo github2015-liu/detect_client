@@ -10,14 +10,14 @@ import android.content.pm.PackageManager;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PorterDuff;
-import android.graphics.SurfaceTexture;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Surface;
-import android.view.TextureView;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -34,28 +34,24 @@ import com.senseauto.healthdetect.HealthDetectManager;
 import com.senseauto.healthdetect.IHealDetectApiInterface;
 import com.senseauto.healthdetect.IHealthDetectCallback;
 import com.senseauto.healthdetect.Seat;
-import com.senseauto.subgroup.autocameralib.CameraFactory;
-import com.senseauto.subgroup.autocameralib.callback.CameraImageCallback;
-import com.senseauto.subgroup.autocameralib.model.CameraOptions;
 
 import org.json.JSONException;
 import org.json.JSONObject;
 
-public class MainActivity extends Activity implements TextureView.SurfaceTextureListener {
+public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final String TAG = "MainActivity";
     private static final String PREVIEW_TRACE_TAG = "PreviewTrace";
     private static final int CAMERA_PERMISSION_REQUEST_CODE = 100;
-    private static final int DEFAULT_PREVIEW_CAMERA_ID = 13;
+    // Keep preview aligned with the service's car front-camera default. The
+    // device must also expose this camera in shared_session_config.xml.
+    private static final int DEFAULT_PREVIEW_CAMERA_ID = 31;
     private static final boolean MIRROR_PREVIEW = true;
-    private static final int PREVIEW_WIDTH = 1920;
-    private static final int PREVIEW_HEIGHT = 1080;
-
     private Surface previewSurface;
-    private TextureView previewTextureView;
+    private SurfaceView previewSurfaceView;
     private EditText previewCameraIdInput;
     private Spinner updateSeatSpinner;
     private TextView healthResultTextView;
-    private CameraFactory previewCameraFactory;
+    private SharedPreviewController previewCameraFactory;
     private IHealDetectApiInterface resultService;
     private boolean resultServiceBound = false;
     private boolean isPreviewOpen = false;
@@ -140,7 +136,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        previewTextureView = findViewById(R.id.sv_preview);
+        previewSurfaceView = findViewById(R.id.sv_preview);
         previewCameraIdInput = findViewById(R.id.et_preview_camera_id);
         updateSeatSpinner = findViewById(R.id.spinner_update_seat);
         healthResultTextView = findViewById(R.id.tv_health_result);
@@ -155,8 +151,8 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                         + ", visibility=" + healthResultTextView.getVisibility()
                         + ", text=" + healthResultTextView.getText()
         ));
-        previewTextureView.setSurfaceTextureListener(this);
-        previewTextureView.setScaleX(MIRROR_PREVIEW ? -1f : 1f);
+        previewSurfaceView.getHolder().addCallback(this);
+        previewSurfaceView.setScaleX(MIRROR_PREVIEW ? -1f : 1f);
         ensureCameraPermission();
         bindResultService();
 
@@ -311,37 +307,22 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         logPreviewState("openPreview after release old factory");
 
         int previewCameraId = getPreviewCameraId();
-        CameraOptions cameraOptions = new CameraOptions();
-        cameraOptions.setImgWidth(PREVIEW_WIDTH);
-        cameraOptions.setImgHeight(PREVIEW_HEIGHT);
-        cameraOptions.setCameraId(previewCameraId);
         Log.i(
                 PREVIEW_TRACE_TAG,
-                "openPreview createCameraV2Proxy"
+                "openPreview create shared camera"
                         + " | cameraId=" + previewCameraId
-                        + " | width=" + PREVIEW_WIDTH
-                        + " | height=" + PREVIEW_HEIGHT
-                        + " | viewWidth=" + (previewTextureView == null ? -1 : previewTextureView.getWidth())
-                        + " | viewHeight=" + (previewTextureView == null ? -1 : previewTextureView.getHeight())
+                        + " | viewWidth=" + (previewSurfaceView == null ? -1 : previewSurfaceView.getWidth())
+                        + " | viewHeight=" + (previewSurfaceView == null ? -1 : previewSurfaceView.getHeight())
                         + " | surfaceHash=" + System.identityHashCode(previewSurface)
         );
 
-        previewCameraFactory = CameraFactory.getInstance().createCameraV2Proxy(
+        previewCameraFactory = new SharedPreviewController(
                 this,
-                cameraOptions,
-                new CameraImageCallback() {
+                previewCameraId,
+                previewSurfaceView.getHolder(),
+                new SharedPreviewController.Callback() {
                     @Override
-                    public void onReadImageData(@Nullable byte[] bytes, int width, int height) {
-                        Log.d(
-                                PREVIEW_TRACE_TAG,
-                                "onReadImageData width=" + width
-                                        + " height=" + height
-                                        + " bytes=" + (bytes == null ? -1 : bytes.length)
-                        );
-                    }
-
-                    @Override
-                    public void onException(@NonNull Exception e) {
+                    public void onError(Exception e) {
                         Log.e(TAG, "preview camera exception", e);
                         Log.e(PREVIEW_TRACE_TAG, "onException message=" + e.getMessage(), e);
                         runOnUiThread(() ->
@@ -349,7 +330,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                     }
 
                     @Override
-                    public void onCameraOpenStatus(boolean isOpen) {
+                    public void onOpenStatus(boolean isOpen) {
                         isPreviewOpen = isOpen;
                         Log.i(TAG, "preview camera open status = " + isOpen);
                         logPreviewState("onCameraOpenStatus isOpen=" + isOpen);
@@ -359,14 +340,13 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
                                 Toast.LENGTH_SHORT
                         ).show());
                     }
-                },
-                previewSurface
+                }
         );
 
         pendingOpenPreview = false;
         Log.i(TAG, "openPreview cameraId = " + previewCameraId);
         logPreviewState("openPreview before openCamera");
-        previewCameraFactory.openCamera();
+        previewCameraFactory.open();
         logPreviewState("openPreview after openCamera");
     }
 
@@ -386,7 +366,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
             return;
         }
         logPreviewState("releasePreviewCamera before release");
-        previewCameraFactory.releaseCamera();
+        previewCameraFactory.release();
         previewCameraFactory = null;
         logPreviewState("releasePreviewCamera after release");
     }
@@ -448,82 +428,68 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
     }
 
     private void clearPreviewSurface() {
-        if (previewTextureView == null) {
-            Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface skipped: previewTextureView null");
+        if (previewSurfaceView == null || previewSurface == null || !previewSurface.isValid()) {
+            Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface skipped: surface unavailable");
             return;
         }
-        if (!previewTextureView.isAvailable()) {
-            Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface skipped: texture unavailable");
-            return;
-        }
-
-        Canvas canvas = previewTextureView.lockCanvas();
+        Canvas canvas = previewSurfaceView.getHolder().lockCanvas();
         if (canvas == null) {
             Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface skipped: canvas null");
             return;
         }
         canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        previewTextureView.unlockCanvasAndPost(canvas);
+        previewSurfaceView.getHolder().unlockCanvasAndPost(canvas);
         Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface success");
     }
 
     @Override
-    public void onSurfaceTextureAvailable(@NonNull SurfaceTexture surfaceTexture, int width, int height) {
-        previewSurface = new Surface(surfaceTexture);
-        Log.i(TAG, "surfaceTextureAvailable width=" + width + " height=" + height);
+    public void surfaceCreated(@NonNull SurfaceHolder holder) {
+        previewSurface = holder.getSurface();
+        Log.i(TAG, "surfaceCreated");
         Log.i(
                 PREVIEW_TRACE_TAG,
-                "surfaceTextureAvailable"
+                "surfaceCreated"
                         + " | surfaceValid=" + previewSurface.isValid()
-                        + " | viewWidth=" + (previewTextureView == null ? -1 : previewTextureView.getWidth())
-                        + " | viewHeight=" + (previewTextureView == null ? -1 : previewTextureView.getHeight())
-                        + " | width=" + width
-                        + " | height=" + height
+                        + " | viewWidth=" + (previewSurfaceView == null ? -1 : previewSurfaceView.getWidth())
+                        + " | viewHeight=" + (previewSurfaceView == null ? -1 : previewSurfaceView.getHeight())
                         + " | surfaceHash=" + System.identityHashCode(previewSurface)
         );
-        logPreviewState("surfaceTextureAvailable state");
+        logPreviewState("surfaceCreated state");
         if (pendingOpenPreview) {
-            Log.i(TAG, "surfaceTextureAvailable: retry pending preview open");
+            Log.i(TAG, "surfaceCreated: retry pending preview open");
             openPreview();
         }
     }
 
     @Override
-    public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture surfaceTexture, int width, int height) {
-        Log.i(TAG, "surfaceTextureSizeChanged width=" + width + " height=" + height);
+    public void surfaceChanged(@NonNull SurfaceHolder holder, int format, int width, int height) {
+        Log.i(TAG, "surfaceChanged width=" + width + " height=" + height);
         Log.i(
                 PREVIEW_TRACE_TAG,
-                "surfaceTextureSizeChanged"
+                "surfaceChanged"
                         + " | width=" + width
                         + " | height=" + height
-                        + " | viewWidth=" + (previewTextureView == null ? -1 : previewTextureView.getWidth())
-                        + " | viewHeight=" + (previewTextureView == null ? -1 : previewTextureView.getHeight())
+                        + " | viewWidth=" + (previewSurfaceView == null ? -1 : previewSurfaceView.getWidth())
+                        + " | viewHeight=" + (previewSurfaceView == null ? -1 : previewSurfaceView.getHeight())
                         + " | surfaceValid=" + (previewSurface != null && previewSurface.isValid())
         );
-        logPreviewState("surfaceTextureSizeChanged state");
+        logPreviewState("surfaceChanged state");
     }
 
     @Override
-    public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture surfaceTexture) {
-        Log.i(TAG, "surfaceTextureDestroyed");
+    public void surfaceDestroyed(@NonNull SurfaceHolder holder) {
+        Log.i(TAG, "surfaceDestroyed");
         Log.i(
                 PREVIEW_TRACE_TAG,
-                "surfaceTextureDestroyed"
+                "surfaceDestroyed"
                         + " | surfaceValid=" + (previewSurface != null && previewSurface.isValid())
                         + " | surfaceHash=" + (previewSurface == null ? -1 : System.identityHashCode(previewSurface))
         );
-        logPreviewState("surfaceTextureDestroyed before clear surface");
-        clearPreviewSurface();
-        closePreview();
-        if (previewSurface != null) {
-            previewSurface.release();
-            previewSurface = null;
-        }
-        return true;
-    }
-
-    @Override
-    public void onSurfaceTextureUpdated(@NonNull SurfaceTexture surfaceTexture) {
+        logPreviewState("surfaceDestroyed before close preview");
+        releasePreviewCamera();
+        isPreviewOpen = false;
+        pendingOpenPreview = false;
+        previewSurface = null;
     }
 
     @Override
@@ -542,10 +508,7 @@ public class MainActivity extends Activity implements TextureView.SurfaceTexture
         logPreviewState("onDestroy enter");
         releaseResultService();
         closePreview();
-        if (previewSurface != null) {
-            previewSurface.release();
-            previewSurface = null;
-        }
+        previewSurface = null;
         super.onDestroy();
     }
 }
