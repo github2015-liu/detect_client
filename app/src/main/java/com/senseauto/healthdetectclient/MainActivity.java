@@ -284,6 +284,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     private void openPreview() {
         logPreviewState("openPreview enter");
+        if (previewSurfaceView != null) {
+            previewSurfaceView.setAlpha(1f);
+        }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ensureCameraPermission();
             Log.w(PREVIEW_TRACE_TAG, "openPreview blocked: camera permission missing");
@@ -364,6 +367,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
 
     private void closePreview() {
         logPreviewState("closePreview enter");
+        if (previewSurfaceView != null) {
+            previewSurfaceView.setAlpha(0f);
+        }
         releasePreviewCamera();
         isPreviewOpen = false;
         pendingOpenPreview = false;

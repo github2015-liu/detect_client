@@ -33,6 +33,8 @@ final class SharedPreviewController {
     private static final int MAX_REOPEN_ATTEMPTS = 5;
     private static final long NO_FRAME_TIMEOUT_MS = 3000L;
     private static final long NO_FRAME_CHECK_INTERVAL_MS = 1000L;
+    private static final long RELEASE_READY_TIMEOUT_MS = 1000L;
+    private static final long RELEASE_CLOSED_TIMEOUT_MS = 1000L;
 
     interface Callback {
         void onOpenStatus(boolean isOpen);
@@ -57,6 +59,7 @@ final class SharedPreviewController {
     private boolean primary;
     private boolean openReported;
     private boolean released;
+    private boolean releaseFinished;
     private boolean reopenScheduled;
     private int reopenAttempts;
     private long lastCaptureCompletedAtMs;
@@ -75,6 +78,7 @@ final class SharedPreviewController {
             return;
         }
         released = false;
+        releaseFinished = false;
         cameraThread = new HandlerThread("SharedPreview-" + cameraId);
         cameraThread.start();
         cameraHandler = new Handler(cameraThread.getLooper());
@@ -83,6 +87,9 @@ final class SharedPreviewController {
     }
 
     void release() {
+        if (released) {
+            return;
+        }
         released = true;
         reopenScheduled = false;
         reopenAttempts = 0;
@@ -91,24 +98,7 @@ final class SharedPreviewController {
             return;
         }
         handler.removeCallbacks(noFrameWatchdog);
-        handler.post(() -> {
-            stopStreaming();
-            if (captureSession != null) {
-                captureSession.close();
-                captureSession = null;
-            }
-            if (cameraDevice != null) {
-                cameraDevice.close();
-                cameraDevice = null;
-            }
-            HandlerThread thread = cameraThread;
-            cameraHandler = null;
-            cameraExecutor = null;
-            cameraThread = null;
-            if (thread != null) {
-                thread.quitSafely();
-            }
-        });
+        handler.post(this::beginRelease);
     }
 
     private void configureSurfaceAndOpen() {
@@ -208,12 +198,22 @@ final class SharedPreviewController {
 
         @Override
         public void onDisconnected(@NonNull CameraDevice camera) {
+            if (released) {
+                camera.close();
+                finishRelease();
+                return;
+            }
             handleCameraFailure(camera,
                     new IllegalStateException("camera " + cameraId + " disconnected"));
         }
 
         @Override
         public void onError(@NonNull CameraDevice camera, int error) {
+            if (released) {
+                camera.close();
+                finishRelease();
+                return;
+            }
             if (error == CameraDevice.StateCallback.ERROR_CAMERA_SERVICE) {
                 handleCameraServiceFailure(camera,
                         new IllegalStateException("camera " + cameraId + " error=" + error));
@@ -245,6 +245,10 @@ final class SharedPreviewController {
             new CameraCaptureSession.StateCallback() {
                 @Override
                 public void onConfigured(@NonNull CameraCaptureSession session) {
+                    if (released) {
+                        session.close();
+                        return;
+                    }
                     captureSession = (CameraSharedCaptureSession) session;
                     startStreaming();
                 }
@@ -252,6 +256,10 @@ final class SharedPreviewController {
                 @Override
                 public void onConfigureFailed(@NonNull CameraCaptureSession session) {
                     session.close();
+                    if (released) {
+                        finishRelease();
+                        return;
+                    }
                     IllegalStateException exception = new IllegalStateException(
                             "shared preview session configuration failed for camera " + cameraId);
                     CameraDevice camera = cameraDevice;
@@ -259,6 +267,20 @@ final class SharedPreviewController {
                         handleCameraFailure(camera, exception);
                     } else {
                         notifyError(exception);
+                    }
+                }
+
+                @Override
+                public void onReady(@NonNull CameraCaptureSession session) {
+                    if (released && captureSession == session) {
+                        closeSessionForRelease();
+                    }
+                }
+
+                @Override
+                public void onClosed(@NonNull CameraCaptureSession session) {
+                    if (released) {
+                        finishRelease();
                     }
                 }
             };
@@ -352,6 +374,54 @@ final class SharedPreviewController {
         }
         handler.removeCallbacks(noFrameWatchdog);
         handler.postDelayed(noFrameWatchdog, NO_FRAME_CHECK_INTERVAL_MS);
+    }
+
+    private void beginRelease() {
+        openReported = false;
+        if (captureSession == null) {
+            finishRelease();
+            return;
+        }
+        stopStreaming();
+        Handler handler = cameraHandler;
+        if (handler != null) {
+            handler.postDelayed(this::closeSessionForRelease, RELEASE_READY_TIMEOUT_MS);
+        }
+    }
+
+    private void closeSessionForRelease() {
+        CameraSharedCaptureSession session = captureSession;
+        if (session == null) {
+            finishRelease();
+            return;
+        }
+        captureSession = null;
+        session.close();
+        Handler handler = cameraHandler;
+        if (handler != null) {
+            handler.postDelayed(this::finishRelease, RELEASE_CLOSED_TIMEOUT_MS);
+        }
+    }
+
+    private void finishRelease() {
+        if (releaseFinished) {
+            return;
+        }
+        releaseFinished = true;
+        captureSession = null;
+        if (cameraDevice != null) {
+            cameraDevice.close();
+            cameraDevice = null;
+        }
+        captureRequestBuilder = null;
+        HandlerThread thread = cameraThread;
+        cameraHandler = null;
+        cameraExecutor = null;
+        cameraThread = null;
+        if (thread != null) {
+            thread.quitSafely();
+        }
+        Log.i(TAG, "camera " + cameraId + " release finished");
     }
 
     private void handleCameraFailure(CameraDevice camera, Exception exception) {
