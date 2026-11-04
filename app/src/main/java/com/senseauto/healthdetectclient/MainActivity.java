@@ -7,18 +7,17 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.pm.PackageManager;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.PorterDuff;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.RemoteException;
+import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.Spinner;
@@ -41,6 +40,7 @@ import org.json.JSONObject;
 public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private static final String TAG = "MainActivity";
     private static final String PREVIEW_TRACE_TAG = "PreviewTrace";
+    private static final long PREVIEW_RECOVERY_COOLDOWN_MS = 5000L;
     private static final int CAMERA_PERMISSION_REQUEST_CODE = 100;
     // Keep preview aligned with the service's car front-camera default. The
     // device must also expose this camera in shared_session_config.xml.
@@ -56,6 +56,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private boolean resultServiceBound = false;
     private boolean isPreviewOpen = false;
     private boolean pendingOpenPreview = false;
+    private boolean recreatingPreviewSurface = false;
+    private long lastPreviewRecoveryAtMs;
 
     private final IHealthDetectCallback resultCallback = new IHealthDetectCallback.Stub() {
         @Override
@@ -340,6 +342,16 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                                 Toast.LENGTH_SHORT
                         ).show());
                     }
+
+                    @Override
+                    public void onCameraServiceError() {
+                        recreatePreviewSurface("camera service error");
+                    }
+
+                    @Override
+                    public void onPreviewStalled() {
+                        recreatePreviewSurface("no completed preview frame");
+                    }
                 }
         );
 
@@ -353,7 +365,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private void closePreview() {
         logPreviewState("closePreview enter");
         releasePreviewCamera();
-        clearPreviewSurface();
         isPreviewOpen = false;
         pendingOpenPreview = false;
         Log.i(TAG, "preview closed");
@@ -369,6 +380,47 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         previewCameraFactory.release();
         previewCameraFactory = null;
         logPreviewState("releasePreviewCamera after release");
+    }
+
+    private void recreatePreviewSurface(String reason) {
+        runOnUiThread(() -> {
+            if (recreatingPreviewSurface || previewSurfaceView == null) {
+                return;
+            }
+            long now = SystemClock.elapsedRealtime();
+            if (now - lastPreviewRecoveryAtMs < PREVIEW_RECOVERY_COOLDOWN_MS) {
+                Log.w(PREVIEW_TRACE_TAG, "skip preview recovery during cooldown, reason=" + reason);
+                return;
+            }
+            lastPreviewRecoveryAtMs = now;
+            recreatingPreviewSurface = true;
+            Log.i(PREVIEW_TRACE_TAG, "recreate preview surface, reason=" + reason);
+            releasePreviewCamera();
+            isPreviewOpen = false;
+            pendingOpenPreview = true;
+            previewSurface = null;
+
+            SurfaceView oldSurfaceView = previewSurfaceView;
+            if (!(oldSurfaceView.getParent() instanceof ViewGroup)) {
+                recreatingPreviewSurface = false;
+                return;
+            }
+            ViewGroup parent = (ViewGroup) oldSurfaceView.getParent();
+            int index = parent.indexOfChild(oldSurfaceView);
+            ViewGroup.LayoutParams layoutParams = oldSurfaceView.getLayoutParams();
+            oldSurfaceView.getHolder().removeCallback(this);
+            parent.removeViewAt(index);
+
+            SurfaceView newSurfaceView = new SurfaceView(this);
+            newSurfaceView.setId(R.id.sv_preview);
+            newSurfaceView.setLayoutParams(layoutParams);
+            newSurfaceView.setKeepScreenOn(true);
+            newSurfaceView.setScaleX(MIRROR_PREVIEW ? -1f : 1f);
+            newSurfaceView.getHolder().addCallback(this);
+            previewSurfaceView = newSurfaceView;
+            parent.addView(newSurfaceView, index);
+            recreatingPreviewSurface = false;
+        });
     }
 
     private int getPreviewCameraId() {
@@ -425,21 +477,6 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             return "后排右侧";
         }
         return seat == null ? "未知" : seat;
-    }
-
-    private void clearPreviewSurface() {
-        if (previewSurfaceView == null || previewSurface == null || !previewSurface.isValid()) {
-            Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface skipped: surface unavailable");
-            return;
-        }
-        Canvas canvas = previewSurfaceView.getHolder().lockCanvas();
-        if (canvas == null) {
-            Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface skipped: canvas null");
-            return;
-        }
-        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        previewSurfaceView.getHolder().unlockCanvasAndPost(canvas);
-        Log.i(PREVIEW_TRACE_TAG, "clearPreviewSurface success");
     }
 
     @Override

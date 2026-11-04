@@ -1,6 +1,7 @@
 package com.senseauto.healthdetectclient;
 
 import android.content.Context;
+import android.graphics.PixelFormat;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
@@ -13,11 +14,14 @@ import android.hardware.camera2.params.SharedSessionConfiguration;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import androidx.annotation.NonNull;
+
+import android.hardware.camera2.TotalCaptureResult;
 
 import java.util.Collections;
 import java.util.concurrent.Executor;
@@ -27,10 +31,14 @@ final class SharedPreviewController {
     private static final int SURFACE_TYPE_SURFACE_VIEW = 0;
     private static final long REOPEN_DELAY_MS = 1000L;
     private static final int MAX_REOPEN_ATTEMPTS = 5;
+    private static final long NO_FRAME_TIMEOUT_MS = 3000L;
+    private static final long NO_FRAME_CHECK_INTERVAL_MS = 1000L;
 
     interface Callback {
         void onOpenStatus(boolean isOpen);
         void onError(Exception exception);
+        void onCameraServiceError();
+        void onPreviewStalled();
     }
 
     private final Context context;
@@ -51,6 +59,8 @@ final class SharedPreviewController {
     private boolean released;
     private boolean reopenScheduled;
     private int reopenAttempts;
+    private long lastCaptureCompletedAtMs;
+    private boolean stallReported;
 
     SharedPreviewController(
             Context context, int cameraId, SurfaceHolder surfaceHolder, Callback callback) {
@@ -80,6 +90,7 @@ final class SharedPreviewController {
         if (handler == null) {
             return;
         }
+        handler.removeCallbacks(noFrameWatchdog);
         handler.post(() -> {
             stopStreaming();
             if (captureSession != null) {
@@ -115,6 +126,7 @@ final class SharedPreviewController {
                     CameraCharacteristics.SHARED_SESSION_CONFIGURATION);
             SharedSessionConfiguration.SharedOutputConfiguration previewOutput =
                     findPreviewOutput(sharedConfig);
+            surfaceHolder.setFormat(PixelFormat.OPAQUE);
             surfaceHolder.setFixedSize(
                     previewOutput.getSize().getWidth(), previewOutput.getSize().getHeight());
             Handler handler = cameraHandler;
@@ -202,6 +214,11 @@ final class SharedPreviewController {
 
         @Override
         public void onError(@NonNull CameraDevice camera, int error) {
+            if (error == CameraDevice.StateCallback.ERROR_CAMERA_SERVICE) {
+                handleCameraServiceFailure(camera,
+                        new IllegalStateException("camera " + cameraId + " error=" + error));
+                return;
+            }
             handleCameraFailure(camera,
                     new IllegalStateException("camera " + cameraId + " error=" + error));
         }
@@ -248,6 +265,13 @@ final class SharedPreviewController {
 
     private final CameraCaptureSession.CaptureCallback captureCallback =
             new CameraCaptureSession.CaptureCallback() {
+                @Override
+                public void onCaptureCompleted(
+                        @NonNull CameraCaptureSession session,
+                        @NonNull CaptureRequest request,
+                        @NonNull TotalCaptureResult result) {
+                    lastCaptureCompletedAtMs = SystemClock.elapsedRealtime();
+                }
             };
 
     private void startStreaming() {
@@ -264,6 +288,9 @@ final class SharedPreviewController {
                         Collections.singletonList(previewSurface), cameraExecutor, captureCallback);
             }
             reopenAttempts = 0;
+            lastCaptureCompletedAtMs = SystemClock.elapsedRealtime();
+            stallReported = false;
+            scheduleNoFrameWatchdog();
             if (!openReported) {
                 openReported = true;
                 callback.onOpenStatus(true);
@@ -299,6 +326,34 @@ final class SharedPreviewController {
         }
     }
 
+    private final Runnable noFrameWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            Handler handler = cameraHandler;
+            if (released || handler == null || captureSession == null || stallReported) {
+                return;
+            }
+            long noFrameDurationMs = SystemClock.elapsedRealtime() - lastCaptureCompletedAtMs;
+            if (noFrameDurationMs >= NO_FRAME_TIMEOUT_MS) {
+                stallReported = true;
+                Log.e(TAG, "camera " + cameraId + " preview stalled for "
+                        + noFrameDurationMs + " ms");
+                callback.onPreviewStalled();
+                return;
+            }
+            handler.postDelayed(this, NO_FRAME_CHECK_INTERVAL_MS);
+        }
+    };
+
+    private void scheduleNoFrameWatchdog() {
+        Handler handler = cameraHandler;
+        if (handler == null || released) {
+            return;
+        }
+        handler.removeCallbacks(noFrameWatchdog);
+        handler.postDelayed(noFrameWatchdog, NO_FRAME_CHECK_INTERVAL_MS);
+    }
+
     private void handleCameraFailure(CameraDevice camera, Exception exception) {
         if (captureSession != null) {
             captureSession.close();
@@ -310,6 +365,22 @@ final class SharedPreviewController {
         primary = false;
         notifyError(exception);
         scheduleReopen();
+    }
+
+    private void handleCameraServiceFailure(CameraDevice camera, Exception exception) {
+        reopenScheduled = false;
+        if (captureSession != null) {
+            captureSession.close();
+            captureSession = null;
+        }
+        camera.close();
+        cameraDevice = null;
+        captureRequestBuilder = null;
+        primary = false;
+        notifyError(exception);
+        if (!released) {
+            callback.onCameraServiceError();
+        }
     }
 
     private void scheduleReopen() {
