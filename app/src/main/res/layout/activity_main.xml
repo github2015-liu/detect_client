@@ -119,6 +119,27 @@
                 android:text="@string/bt_close_preview" />
 
             <Button
+                android:id="@+id/bt_start_face_tracking"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_start_face_tracking" />
+
+            <Button
+                android:id="@+id/bt_stop_face_tracking"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/bt_stop_face_tracking" />
+
+            <TextView
+                android:id="@+id/tv_face_coordinates"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="72dp"
+                android:padding="8dp"
+                android:text="@string/face_coordinates_waiting"
+                android:textIsSelectable="true" />
+
+            <Button
                 android:id="@+id/bt_exit"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

@@ -13,5 +13,7 @@ interface IHealthDetectCallback {
 
     void onFinishResult(String seat, String healthJson);
 
-    void onError(int code, String message);
+    void onError(String seat, int code, String message);
+    void onFaceCoordinates(String seat, String coordinatesJson, int frameWidth, int frameHeight, long timestamp);
+    void onFaceCoordinateError(int code);
 }

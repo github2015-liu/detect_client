@@ -12,4 +12,6 @@ interface IHealDetectApiInterface {
     String getDetectingSeat();
     void registerCallback(in IHealthDetectCallback callback);
     void unregisterCallback(in IHealthDetectCallback callback);
+    int startFaceCoordinateTracking(String seat);
+    void stopFaceCoordinateTracking();
 }

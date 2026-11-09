@@ -8,6 +8,9 @@
     <string name="bt_toast">当前检测座位</string>
     <string name="bt_open_preview">打开预览</string>
     <string name="bt_close_preview">关闭预览</string>
+    <string name="bt_start_face_tracking">开始获取人脸坐标</string>
+    <string name="bt_stop_face_tracking">停止获取人脸坐标</string>
+    <string name="face_coordinates_waiting">人脸坐标：等待数据</string>
     <string name="bt_exit">退出程序</string>
     <string name="hint_preview_camera_id">设置摄像头ID，默认13</string>
     <string name="health_result_waiting">健康检测结果：等待检测完成</string>

@@ -35,6 +35,7 @@ import com.senseauto.healthdetect.IHealthDetectCallback;
 import com.senseauto.healthdetect.Seat;
 
 import org.json.JSONException;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class MainActivity extends Activity implements SurfaceHolder.Callback {
@@ -51,6 +52,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private EditText previewCameraIdInput;
     private Spinner updateSeatSpinner;
     private TextView healthResultTextView;
+    private TextView faceCoordinatesTextView;
     private SharedPreviewController previewCameraFactory;
     private IHealDetectApiInterface resultService;
     private boolean resultServiceBound = false;
@@ -82,12 +84,49 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
 
         @Override
-        public void onError(int code, String message) {
+        public void onError(String seat, int code, String message) {
             runOnUiThread(() -> healthResultTextView.setText(
                     getString(R.string.health_result_error, code, message)
             ));
         }
+
+        @Override
+        public void onFaceCoordinates(String seat, String coordinatesJson, int frameWidth,
+                                      int frameHeight, long timestamp) {
+            String display = formatFaceCoordinates(seat, coordinatesJson, frameWidth, frameHeight);
+            runOnUiThread(() -> faceCoordinatesTextView.setText(display));
+        }
+
+        @Override
+        public void onFaceCoordinateError(int code) {
+            runOnUiThread(() -> faceCoordinatesTextView.setText("人脸坐标跟踪失败：" + code));
+        }
     };
+
+    private String formatFaceCoordinates(String seat, String coordinatesJson,
+                                         int frameWidth, int frameHeight) {
+        try {
+            JSONArray coordinates = new JSONArray(coordinatesJson);
+            StringBuilder display = new StringBuilder()
+                    .append("座位：").append(getSeatLabel(seat))
+                    .append("\n帧尺寸：").append(frameWidth).append(" x ").append(frameHeight);
+            if (coordinates.length() == 0) {
+                return display.append("\n未检测到人脸").toString();
+            }
+            for (int i = 0; i < coordinates.length(); i++) {
+                JSONObject face = coordinates.getJSONObject(i);
+                display.append("\n人脸 ").append(face.optInt("faceId"))
+                        .append(": [").append(face.optInt("left"))
+                        .append(", ").append(face.optInt("top"))
+                        .append("] - [").append(face.optInt("right"))
+                        .append(", ").append(face.optInt("bottom")).append("]");
+            }
+            return display.toString();
+        } catch (JSONException e) {
+            Log.e(TAG, "parse face coordinates failed", e);
+            return coordinatesJson;
+        }
+    }
 
     private String formatHealthVitals(int formatResource, String healthJson, boolean realtime) {
         try {
@@ -142,6 +181,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         previewCameraIdInput = findViewById(R.id.et_preview_camera_id);
         updateSeatSpinner = findViewById(R.id.spinner_update_seat);
         healthResultTextView = findViewById(R.id.tv_health_result);
+        faceCoordinatesTextView = findViewById(R.id.tv_face_coordinates);
         healthResultTextView.setVisibility(View.VISIBLE);
         healthResultTextView.bringToFront();
         Log.i(TAG, "health result view initialized: visible="
@@ -216,7 +256,30 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         findViewById(R.id.bt_stop_detect).setOnClickListener(v ->
                 HealthDetectManager.getInstance(MainActivity.this).stopDetect());
 
+        findViewById(R.id.bt_start_face_tracking).setOnClickListener(v -> {
+            bindResultService();
+            HealthDetectManager.getInstance(MainActivity.this).init(new HealthDetectManager.InitCallback() {
+                @Override
+                public void onReady() {
+                    int result = HealthDetectManager.getInstance(MainActivity.this)
+                            .startFaceCoordinateTracking(getUpdateSeat());
+                    if (result != 0) {
+                        Toast.makeText(MainActivity.this,
+                                "启动人脸坐标跟踪失败：" + result, Toast.LENGTH_SHORT).show();
+                    }
+                }
+
+                @Override
+                public void onError(int code, String message) {
+                    Toast.makeText(MainActivity.this, message, Toast.LENGTH_SHORT).show();
+                }
+            });
+        });
+
+        findViewById(R.id.bt_stop_face_tracking).setOnClickListener(v -> stopFaceCoordinateTracking());
+
         findViewById(R.id.bt_unbind).setOnClickListener(v -> {
+            stopFaceCoordinateTracking();
             HealthDetectManager.getInstance(MainActivity.this).stopDetect();
             HealthDetectManager.getInstance(MainActivity.this).release();
             releaseResultService();
@@ -237,6 +300,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
             closePreview();
         });
         findViewById(R.id.bt_exit).setOnClickListener(v -> {
+            stopFaceCoordinateTracking();
             HealthDetectManager.getInstance(MainActivity.this).stopDetect();
             HealthDetectManager.getInstance(MainActivity.this).release();
             releaseResultService();
@@ -269,6 +333,13 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         if (resultServiceBound) {
             unbindService(resultServiceConnection);
             resultServiceBound = false;
+        }
+    }
+
+    private void stopFaceCoordinateTracking() {
+        int result = HealthDetectManager.getInstance(MainActivity.this).stopFaceCoordinateTracking();
+        if (result == 0) {
+            faceCoordinatesTextView.setText(R.string.face_coordinates_waiting);
         }
     }
 
@@ -549,6 +620,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     @Override
     protected void onDestroy() {
         logPreviewState("onDestroy enter");
+        stopFaceCoordinateTracking();
         releaseResultService();
         closePreview();
         previewSurface = null;
