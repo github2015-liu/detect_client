@@ -52,6 +52,8 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private EditText previewCameraIdInput;
     private Spinner updateSeatSpinner;
     private TextView healthResultTextView;
+    private TextView secondHealthResultTextView;
+    private final boolean[] finalResultShown = new boolean[2];
     private TextView faceCoordinatesTextView;
     private SharedPreviewController previewCameraFactory;
     private IHealDetectApiInterface resultService;
@@ -60,34 +62,54 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
     private boolean pendingOpenPreview = false;
     private boolean recreatingPreviewSurface = false;
     private long lastPreviewRecoveryAtMs;
+    private int finalResultCount;
 
     private final IHealthDetectCallback resultCallback = new IHealthDetectCallback.Stub() {
         @Override
         public void onHealthStateUpdate(String seat, String healthJson) {
             String resultText = formatHealthVitals(R.string.health_result_realtime, healthJson, true);
             Log.i(TAG, "onHealthStateUpdate: " + resultText);
-            runOnUiThread(() -> healthResultTextView.setText(resultText));
+            int resultIndex;
+            synchronized (MainActivity.this) {
+                resultIndex = Math.min(finalResultCount, 1);
+            }
+            runOnUiThread(() -> {
+                if (!finalResultShown[resultIndex]) {
+                    updateHealthResultView(resultIndex, resultText);
+                }
+            });
         }
 
         @Override
         public void onFinishResult(String seat, String healthJson) {
             String resultText = formatHealthVitals(R.string.health_result_final, healthJson, false);
-            Log.i(TAG, "onFinishResult:\n" + resultText);
+            int resultNumber;
+            synchronized (MainActivity.this) {
+                resultNumber = ++finalResultCount;
+            }
+            String confidence = "--";
+            try {
+                confidence = new JSONObject(healthJson).optString("hr_conf_cur", "--");
+            } catch (JSONException e) {
+                Log.e(TAG, "parse hr_conf_cur failed", e);
+            }
+            String numberedResult = "结果" + resultNumber + " (" + seat + ")\n"
+                    + resultText + "\nhr_conf_cur: " + confidence;
+            String resultConfidence = confidence;
+            Log.i(TAG, "onFinishResult:\n" + numberedResult);
             runOnUiThread(() -> {
-                healthResultTextView.setVisibility(View.VISIBLE);
-                healthResultTextView.bringToFront();
-                healthResultTextView.setText(resultText);
-                Log.i(TAG, "health result view updated: width="
-                        + healthResultTextView.getWidth()
-                        + ", height=" + healthResultTextView.getHeight());
+                int resultIndex = Math.min(resultNumber - 1, 1);
+                finalResultShown[resultIndex] = true;
+                updateHealthResultView(resultIndex, resultText + "\nhr_conf_cur: " + resultConfidence);
             });
         }
 
         @Override
         public void onError(String seat, int code, String message) {
-            runOnUiThread(() -> healthResultTextView.setText(
-                    getString(R.string.health_result_error, code, message)
-            ));
+            runOnUiThread(() -> {
+                int resultIndex = Math.min(finalResultCount, 1);
+                updateHealthResultView(resultIndex, getString(R.string.health_result_error, code, message));
+            });
         }
 
         @Override
@@ -144,6 +166,21 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         }
     }
 
+    private void updateHealthResultView(int resultIndex, String resultText) {
+        TextView view = resultIndex == 0 ? healthResultTextView : secondHealthResultTextView;
+        view.setText("结果" + (resultIndex + 1) + "\n" + resultText);
+    }
+
+    private void resetHealthResultViews() {
+        synchronized (this) {
+            finalResultCount = 0;
+        }
+        for (int i = 0; i < 2; i++) {
+            finalResultShown[i] = false;
+            updateHealthResultView(i, getString(R.string.health_result_waiting));
+        }
+    }
+
     private final ServiceConnection resultServiceConnection = new ServiceConnection() {
         @Override
         public void onServiceConnected(ComponentName name, IBinder service) {
@@ -181,7 +218,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         previewCameraIdInput = findViewById(R.id.et_preview_camera_id);
         updateSeatSpinner = findViewById(R.id.spinner_update_seat);
         healthResultTextView = findViewById(R.id.tv_health_result);
+        secondHealthResultTextView = findViewById(R.id.tv_health_result_second);
         faceCoordinatesTextView = findViewById(R.id.tv_face_coordinates);
+        resetHealthResultViews();
         healthResultTextView.setVisibility(View.VISIBLE);
         healthResultTextView.bringToFront();
         Log.i(TAG, "health result view initialized: visible="
@@ -209,6 +248,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         });
 
         findViewById(R.id.bt_bind).setOnClickListener(v -> {
+            resetHealthResultViews();
             bindResultService();
             HealthDetectManager.getInstance(MainActivity.this).init(new HealthDetectManager.InitCallback() {
                 @Override
@@ -228,6 +268,7 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
         });
 
         findViewById(R.id.bt_auto).setOnClickListener(v -> {
+            resetHealthResultViews();
             bindResultService();
             HealthDetectManager.getInstance(MainActivity.this).init(new HealthDetectManager.InitCallback() {
                 @Override
