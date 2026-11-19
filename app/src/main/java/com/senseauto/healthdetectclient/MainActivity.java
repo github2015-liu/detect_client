@@ -136,7 +136,9 @@ public class MainActivity extends Activity implements SurfaceHolder.Callback {
                     result.optString(realtime ? "heart_rate" : "heartRate",
                             result.optString("heartRate", "--")),
                     result.optString(realtime ? "breath_rate" : "breathRate",
-                            result.optString("breathRate", "--"))
+                            result.optString("breathRate", "--")),
+                    result.optString(realtime ? "stress_score" : "stressScore",
+                            result.optString("stressScore", "--"))
             );
         } catch (JSONException e) {
             Log.e(TAG, "parse health result failed", e);
